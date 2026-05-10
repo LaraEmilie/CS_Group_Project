@@ -381,26 +381,29 @@ def berechne_risiko(inp: dict) -> dict:
 def chat_antwort(frage: str, kontext: dict, verlauf: list) -> str:
     """
     Verarbeitet eine Nutzerfrage im Kontext des Analyseergebnisses.
-    Nutzt die OpenAI API wenn OPENAI_API_KEY gesetzt ist,
+    Nutzt die Anthropic API wenn ANTHROPIC_API_KEY gesetzt ist,
     sonst greift die eingebaute Stichwort-Logik als Fallback.
     """
-    api_key = os.getenv("OPENAI_API_KEY", "")    # Liest den API-Key aus den Umgebungsvariablen  
-    if api_key:                                  # Wenn OpenAi-Key vorhanden, wird er für die Antwortgenerierung verwendet.   
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")    # Liest den API-Key aus den Umgebungsvariablen
+    if api_key:                                      # Wenn Anthropic-Key vorhanden, wird Claude für die Antworten verwendet.
         try:
-            import openai
-            client = openai.OpenAI(api_key=api_key)
-            system = (                                                                                  # Systemprompt definiert Rolle, Sprache und Kontext des Assistenten
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            system = (                                                                # Systemprompt definiert Rolle, Sprache und Kontext des Assistenten
                 f"Du bist ein freundlicher Kreditrisikoberater. Antworte ausschließlich auf Deutsch. "
                 f"Nutzerprofil: Risikoklasse={kontext.get('risiko')}, "
                 f"Ausfallwahrscheinlichkeit={kontext.get('prob')}%, "
                 f"Alter={kontext.get('alter')}, Kreditbetrag={kontext.get('kreditbetrag')}."
             )
-            msgs = [{"role":"system","content":system}]                                           
-            for h in verlauf[-6:]:
-                msgs.append(h)
-            msgs.append({"role":"user","content":frage})
-            r = client.chat.completions.create(model="gpt-4o", messages=msgs, max_tokens=400)            # Anfrage an das Sprachmodell GPT-4o    
-            return r.choices[0].message.content
+            msgs = [{"role": h["role"], "content": h["content"]} for h in verlauf[-6:]]
+            msgs.append({"role": "user", "content": frage})
+            r = client.messages.create(
+                model="claude-sonnet-4-20250514",    # Anthropic Claude Sonnet
+                max_tokens=400,
+                system=system,
+                messages=msgs,
+            )
+            return r.content[0].text
         except Exception as e:
             return f"(Verbindungsfehler: {e})"
     # Stichwort-Fallback wenn kein API-Key hinterlegt
