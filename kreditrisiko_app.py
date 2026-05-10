@@ -2,11 +2,11 @@
 KreditRisiko Analyse – Streamlit App
 =====================================
 Ausführen:
-  pip install streamlit plotly pandas numpy requests
+  pip install streamlit pandas numpy requests
   streamlit run kreditrisiko_app.py
 
 Umgebungsvariablen (.env oder Systemvariable):
-  OPENAI_API_KEY       – Chat-Funktion im Analyse-Tab
+  ANTHROPIC_API_KEY    – Chat-Funktion im Analyse-Tab
   EXCHANGE_API_KEY     – Live-Wechselkurse via api.exchangerate.host
 """
 
@@ -16,7 +16,6 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import plotly.graph_objects as go
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  SEITEN-KONFIGURATION  (muss als erstes Streamlit-Kommando stehen)s
@@ -417,7 +416,7 @@ def chat_antwort(frage: str, kontext: dict, verlauf: list) -> str:
     if any(w in q for w in ["senken","verbesser","tun","empfehlung"]):
         return ("Pünktliche Zahlungen und ein niedriger Saldo sind die wirksamsten Hebel. "
                 "Sprich außerdem mit deiner Bank über Umschuldungsmöglichkeiten.")
-    return ("Für vollständige Chat-Antworten bitte OPENAI_API_KEY als "
+    return ("Für vollständige Chat-Antworten bitte ANTHROPIC_API_KEY als "
             "Umgebungsvariable setzen.")
 
 
@@ -1160,22 +1159,29 @@ elif seite == "Modell-Info":
     # ── Konfusionsmatrix (Heatmap) ────────────────────────────────────────────
     st.markdown('<div class="section-label" style="margin-top:1rem">KONFUSIONSMATRIX</div>',
                 unsafe_allow_html=True)
-    fig_cm = go.Figure(go.Heatmap(
-        z=[[3768,905],[511,816]],
-        x=["Vorhergesagt: Kein Ausfall","Vorhergesagt: Ausfall"],
-        y=["Tatsächlich: Kein Ausfall","Tatsächlich: Ausfall"],
-        text=[["Richtig negativ\n3.768","Falsch positiv\n905"],
-              ["Falsch negativ\n511","Richtig positiv\n816"]],
-        texttemplate="%{text}",
-        colorscale=[[0,"#FDE8E8"],[0.45,"#FDE8E8"],[0.55,"#E6F7F1"],[1,"#E6F7F1"]],
-        showscale=False,
-    ))
-    fig_cm.update_layout(
-        height=290, font=dict(color=NAVY),
-        paper_bgcolor="white", plot_bgcolor="white",
-        margin=dict(t=20,b=40),
-    )
-    st.plotly_chart(fig_cm, use_container_width=True)
+    cm = [[3768, 905], [511, 816]]
+    labels = [["Richtig negativ\n3.768", "Falsch positiv\n905"],
+              ["Falsch negativ\n511",    "Richtig positiv\n816"]]
+    farben = [["#E6F7F1", "#FDE8E8"],
+              ["#FDE8E8", "#E6F7F1"]]
+
+    fig_cm, ax_cm = plt.subplots(figsize=(7, 3))
+    for i in range(2):
+        for j in range(2):
+            ax_cm.add_patch(plt.Rectangle((j, 1-i), 1, 1, color=farben[i][j]))
+            ax_cm.text(j + 0.5, 1.5 - i, labels[i][j],
+                       ha="center", va="center", fontsize=10, color=NAVY)
+    ax_cm.set_xlim(0, 2)
+    ax_cm.set_ylim(0, 2)
+    ax_cm.set_xticks([0.5, 1.5])
+    ax_cm.set_xticklabels(["Vorhergesagt:\nKein Ausfall", "Vorhergesagt:\nAusfall"], color=NAVY)
+    ax_cm.set_yticks([0.5, 1.5])
+    ax_cm.set_yticklabels(["Tatsächlich:\nAusfall", "Tatsächlich:\nKein Ausfall"], color=NAVY)
+    ax_cm.tick_params(length=0)
+    for spine in ax_cm.spines.values():
+        spine.set_visible(False)
+    plt.tight_layout()
+    st.pyplot(fig_cm)
 
     # ── Textinfo-Kacheln (keine Dropdowns) ───────────────────────────────────
     i1, i2 = st.columns(2)   # Erstellen von zwei Spalten
