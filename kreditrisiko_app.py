@@ -251,9 +251,9 @@ def lade_modell():
     Gibt None zurück, falls die Datei nicht gefunden wird.
     """
     try:
-        return joblib.load("best_xgb_model.pkl")
+        return joblib.load("best_xgb_model.pkl")          # Lädt das Modell direkt aus der .pkl-Datei im App-Verzeichnis
     except FileNotFoundError:
-        return None
+        return None                                        # Gibt None zurück, damit der Fallback greift
     except Exception as e:
         st.warning(f"Modell konnte nicht geladen werden: {e}")
         return None
@@ -267,15 +267,15 @@ def berechne_risiko(inp: dict) -> dict:
     Fällt auf eine Heuristik zurück, falls das Modell nicht verfügbar ist.
     """
     # ── Hilfsvariablen für Fallback & Erklärungen ────────────────────────────
-    verzoegerungen = sum(v for v in inp["rueckzahlung"] if v > 0)
-    hoher_saldo    = any(b > inp["kreditbetrag_twd"] * 0.8 for b in inp["kontoauszug"])
+    verzoegerungen = sum(v for v in inp["rueckzahlung"] if v > 0)       # Zählt Monate mit positivem Verzugsstatus
+    hoher_saldo    = any(b > inp["kreditbetrag_twd"] * 0.8 for b in inp["kontoauszug"])  # True wenn Saldo > 80% des Limits
 
     pay  = inp["rueckzahlung"]   # 6 Monate Rückzahlungsstatus (−1 … 9)
     bill = inp["kontoauszug"]    # 6 Monate Kontoauszug (TWD)
     paid = inp["bezahlt"]        # 6 Monate tatsächlich bezahlt (TWD)
 
-    total_bill = sum(bill)
-    total_paid = sum(paid)
+    total_bill = sum(bill)       # Gesamtbetrag aller Kontoauszüge der letzten 6 Monate
+    total_paid = sum(paid)       # Gesamtbetrag aller tatsächlichen Rückzahlungen
 
     # ── Mapping: Deutsche Labels → Modell-Integer ────────────────────────────
     geschlecht_map = {"Männlich": 1, "Weiblich": 2}
@@ -322,9 +322,9 @@ def berechne_risiko(inp: dict) -> dict:
     }
 
     # ── Modellvorhersage ─────────────────────────────────────────────────────
-    prob      = None
-    model     = lade_modell()
-    fallback  = False
+    prob      = None              # Ausfallwahrscheinlichkeit, wird durch Modell oder Fallback befüllt
+    model     = lade_modell()     # Ruft das gecachte XGBoost-Modell ab
+    fallback  = False             # Schalter: True wenn Modell nicht verfügbar
 
     if model is not None:
         try:
@@ -335,8 +335,8 @@ def berechne_risiko(inp: dict) -> dict:
                 model_cols = model.get_booster().feature_names
 
             # DataFrame mit exakt den Spalten des Trainings aufbauen
-            X    = pd.DataFrame([{col: alle_features.get(col, 0) for col in model_cols}])
-            prob = float(model.predict_proba(X)[0, 1])   # Wahrscheinlichkeit für Ausfall
+            X    = pd.DataFrame([{col: alle_features.get(col, 0) for col in model_cols}])  # Feature-Vektor mit Modell-Spalten
+            prob = float(model.predict_proba(X)[0, 1])   # Index 1 = Wahrscheinlichkeit für Klasse 1 (Ausfall)
 
         except Exception as err:
             st.warning(f"⚠️ Modell-Vorhersage fehlgeschlagen ({err}). Heuristik wird verwendet.")
@@ -346,8 +346,8 @@ def berechne_risiko(inp: dict) -> dict:
 
     # ── Heuristischer Fallback (falls Modell nicht verfügbar) ────────────────
     if fallback or prob is None:
-        score = verzoegerungen * 12 + (20 if hoher_saldo else 0) + max(0, 38 - inp["alter"])
-        prob  = min(0.95, score / 100)
+        score = verzoegerungen * 12 + (20 if hoher_saldo else 0) + max(0, 38 - inp["alter"])  # Einfache Heuristik: Verzug, Saldo und Alter gewichtet
+        prob  = min(0.95, score / 100)   # Score auf Wahrscheinlichkeit normiert, max. 95%
 
     # ── Risikoklasse aus Wahrscheinlichkeit ──────────────────────────────────
     if prob < 0.33:   risiko, farbe = "NIEDRIG", GRÜN
@@ -432,14 +432,14 @@ def referenz_datensatz() -> pd.DataFrame:
 
     try:
         # Zeile 0 = X1/X2/... (Alias), Zeile 1 = echte Spaltennamen → header=1
-        raw = pd.read_excel(DATEINAME, header=1)
+        raw = pd.read_excel(DATEINAME, header=1)   # header=1: Zeile 0 = X1/X2-Aliase, Zeile 1 = echte Spaltennamen
 
-        bill_cols = ["BILL_AMT1","BILL_AMT2","BILL_AMT3","BILL_AMT4","BILL_AMT5","BILL_AMT6"]
-        pay_cols  = ["PAY_AMT1", "PAY_AMT2", "PAY_AMT3", "PAY_AMT4", "PAY_AMT5", "PAY_AMT6"]
+        bill_cols = ["BILL_AMT1","BILL_AMT2","BILL_AMT3","BILL_AMT4","BILL_AMT5","BILL_AMT6"]  # Kontoauszugsspalten 6 Monate
+        pay_cols  = ["PAY_AMT1", "PAY_AMT2", "PAY_AMT3", "PAY_AMT4", "PAY_AMT5", "PAY_AMT6"]  # Rückzahlungsspalten 6 Monate
 
         limit       = raw["LIMIT_BAL"].astype(float)
         avg_saldo   = raw[bill_cols].mean(axis=1)            # Ø monatlicher Kontoauszug
-        ueber_pct   = np.clip((avg_saldo / limit.clip(lower=1) - 1) * 100, -80, 200)
+        ueber_pct   = np.clip((avg_saldo / limit.clip(lower=1) - 1) * 100, -80, 200)  # Wie stark liegt der Saldo über/unter dem Limit (%)
         bezahlt_sum = raw[bill_cols].sum(axis=1)             # Summe Kontoauszüge 6 Monate
         rueck_sum   = raw[pay_cols].sum(axis=1)              # Summe tatsächlich bezahlt 6 Monate
         letzter     = raw["BILL_AMT1"].astype(float)         # Aktuellster Monat
@@ -498,13 +498,25 @@ with st.sidebar:
         label_visibility="collapsed",
     )
 
-    # Status-Badge für die Wechselkurs-API – statischer Punkt, kein Pulsieren
-    # Grünes Badge signalisiert aktive Wechselkursdaten
+    # Status-Badges – statischer Punkt, kein Pulsieren
+    exchange_aktiv  = bool(os.getenv("EXCHANGE_API_KEY", ""))
+    anthropic_aktiv = bool(os.getenv("ANTHROPIC_API_KEY", ""))
+    ex_farbe  = GRÜN if exchange_aktiv  else MUTED
+    ex_label  = "Wechselkurs-API aktiv"  if exchange_aktiv  else "Wechselkurs-API inaktiv"
+    ant_farbe = GRÜN if anthropic_aktiv else MUTED
+    ant_label = "Anthropic-API aktiv"   if anthropic_aktiv else "Anthropic-API inaktiv"
     st.markdown(f"""
-    <div class="api-badge">
-      <span style='width:8px;height:8px;border-radius:50%;background:{GRÜN};
-            display:inline-block'></span>
-      Wechselkurs-API aktiv
+    <div style='display:flex;gap:8px;flex-wrap:wrap'>
+      <div class="api-badge">
+        <span style='width:8px;height:8px;border-radius:50%;background:{ex_farbe};
+              display:inline-block'></span>
+        {ex_label}
+      </div>
+      <div class="api-badge">
+        <span style='width:8px;height:8px;border-radius:50%;background:{ant_farbe};
+              display:inline-block'></span>
+        {ant_label}
+      </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1156,6 +1168,13 @@ elif seite == "Modell-Info":
             </div>""", unsafe_allow_html=True)
             st.progress(wert / 100)
 
+    st.markdown(f"""
+    <div style='font-size:0.78rem;color:{MUTED};margin-top:-6px;margin-bottom:12px;
+         padding:8px 12px;background:{PALE};border-left:3px solid {LIGHT};border-radius:4px'>
+      ℹ️ Präzision, Recall und F1-Score beziehen sich auf <strong>Klasse 1 (Positives = Zahlungsausfall)</strong>,
+      da dies die relevante Zielklasse für die Kreditrisikoanalyse ist.
+    </div>""", unsafe_allow_html=True)
+
     # ── Konfusionsmatrix (Heatmap) ────────────────────────────────────────────
     st.markdown('<div class="section-label" style="margin-top:1rem">KONFUSIONSMATRIX</div>',
                 unsafe_allow_html=True)
@@ -1165,18 +1184,21 @@ elif seite == "Modell-Info":
     farben = [["#E6F7F1", "#FDE8E8"],
               ["#FDE8E8", "#E6F7F1"]]
 
+    FONT = {"fontfamily": "sans-serif", "color": NAVY}
     fig_cm, ax_cm = plt.subplots(figsize=(7, 3))
     for i in range(2):
         for j in range(2):
             ax_cm.add_patch(plt.Rectangle((j, 1-i), 1, 1, color=farben[i][j]))
             ax_cm.text(j + 0.5, 1.5 - i, labels[i][j],
-                       ha="center", va="center", fontsize=10, color=NAVY)
+                       ha="center", va="center", fontsize=9, **FONT)
     ax_cm.set_xlim(0, 2)
     ax_cm.set_ylim(0, 2)
     ax_cm.set_xticks([0.5, 1.5])
-    ax_cm.set_xticklabels(["Vorhergesagt:\nKein Ausfall", "Vorhergesagt:\nAusfall"], color=NAVY)
+    ax_cm.set_xticklabels(["Vorhergesagt:\nKein Ausfall", "Vorhergesagt:\nAusfall"],
+                           fontsize=8.5, **FONT)
     ax_cm.set_yticks([0.5, 1.5])
-    ax_cm.set_yticklabels(["Tatsächlich:\nAusfall", "Tatsächlich:\nKein Ausfall"], color=NAVY)
+    ax_cm.set_yticklabels(["Tatsächlich:\nAusfall", "Tatsächlich:\nKein Ausfall"],
+                           fontsize=8.5, **FONT)
     ax_cm.tick_params(length=0)
     for spine in ax_cm.spines.values():
         spine.set_visible(False)
