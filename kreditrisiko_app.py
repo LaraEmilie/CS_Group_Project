@@ -12,10 +12,53 @@ Umgebungsvariablen (.env oder Systemvariable):
 
 import os, time, random, datetime, requests
 import joblib
+from sklearn.preprocessing import FunctionTransformer
 import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
+# ── Feature-Engineering-Klassen & Konstanten ────────────────────────────────
+# Müssen vor joblib.load() definiert sein, damit das gespeicherte
+# Pipeline-Objekt (EngineeringTransformer) beim Laden gefunden wird.
+
+BILL_COLS    = [f"BILL_AMT{i}" for i in range(1, 7)]   # Kontoauszugsspalten Monat 1–6
+PAY_AMT_COLS = [f"PAY_AMT{i}"  for i in range(1, 7)]   # Rückzahlungsspalten Monat 1–6
+ENGINEERED_COLS = ["util_mean", "util_last", "pay_ratio_last", "no_bill_last", "pay_amt_std"]
+
+
+def add_engineered_features(X: pd.DataFrame) -> pd.DataFrame:
+    """Stateless Row-wise Feature Engineering – identisch zum Notebook."""
+    X = X.copy()
+    X["util_mean"]      = X[BILL_COLS].mean(axis=1) / X["LIMIT_BAL"]           # Ø Auslastung über alle Monate
+    X["util_last"]      = X["BILL_AMT1"] / X["LIMIT_BAL"]                      # Auslastung im letzten Monat
+    bill = X["BILL_AMT1"]
+    pay  = X["PAY_AMT1"]
+    X["pay_ratio_last"] = np.where(bill > 0, pay / bill, 0.0)                  # Rückzahlungsquote letzter Monat
+    X["no_bill_last"]   = (bill <= 0).astype(int)                               # Flag: kein Rechnungsbetrag
+    X["pay_amt_std"]    = X[PAY_AMT_COLS].std(axis=1).fillna(0.0)              # Volatilität der monatlichen Zahlungen
+    return X
+
+
+class EngineeringTransformer(FunctionTransformer):
+    """Custom FunctionTransformer mit korrekten feature_names_out – identisch zum Notebook."""
+
+    def fit(self, X, y=None, **fit_params):
+        if hasattr(X, "columns"):
+            self.feature_names_in_ = X.columns.tolist()   # Spaltennamen während des Fits speichern
+        else:
+            self.feature_names_in_ = [f"x{i}" for i in range(X.shape[1])]
+        result = super().fit(X, y, **fit_params)           # Parent-fit aufrufen
+        self.n_features_in_ = X.shape[1]                  # Anzahl Input-Features speichern
+        return result
+
+    def get_feature_names_out(self, input_features=None):
+        """Gibt alle Feature-Namen nach dem Engineering zurück."""
+        if input_features is None:
+            feature_names = list(self.feature_names_in_) if hasattr(self, "feature_names_in_")                             else [f"x{i}" for i in range(self.n_features_in_)]
+        else:
+            feature_names = list(input_features)
+        return np.array(feature_names + ENGINEERED_COLS)  # Original + 5 Engineered Features
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  SEITEN-KONFIGURATION  (muss als erstes Streamlit-Kommando stehen)s
@@ -292,17 +335,20 @@ def berechne_risiko(inp: dict) -> dict:
         "Keine Angabe": 3,
     }
 
-    # ── Feature-Dict (Standard-Spalten + typische Engineered Features) ───────
-    # Spaltenreihenfolge orientiert sich an MODEL_COLUMNS aus dem Notebook.
-    # XGBoost liest nur die Spalten, die beim Training vorhanden waren.
-    alle_features = {
-        # Stammdaten
+    # ── One-Hot-Encoding (identisch zum Training) ───────────────────────────
+    # Das Modell wurde mit pd.get_dummies(drop_first=True) trainiert.
+    # SEX: 1=Männlich (Baseline, fällt weg), 2=Weiblich → SEX_2
+    # EDUCATION: 0 ist Baseline (drop_first), 1–6 werden als Dummies kodiert
+    # MARRIAGE: 0 ist Baseline, 1–3 werden als Dummies kodiert
+    sex_val = geschlecht_map.get(inp["geschlecht"], 1)
+    edu_val = bildung_map.get(inp["bildung"], 4)
+    mar_val = familie_map.get(inp["familienstand"], 3)
+
+    raw_input = {
+        # Numerische Spalten (unverändert)
         "LIMIT_BAL": inp["kreditbetrag_twd"],
-        "SEX":       geschlecht_map.get(inp["geschlecht"], 1),
-        "EDUCATION": bildung_map.get(inp["bildung"], 4),
-        "MARRIAGE":  familie_map.get(inp["familienstand"], 3),
         "AGE":       inp["alter"],
-        # Rückzahlungsstatus (PAY_0 = aktuellster Monat, wie im UCI-Datensatz)
+        # Rückzahlungsstatus (PAY_0 = aktuellster Monat)
         "PAY_0": pay[0], "PAY_2": pay[1], "PAY_3": pay[2],
         "PAY_4": pay[3], "PAY_5": pay[4], "PAY_6": pay[5],
         # Kontoauszugsbeträge (TWD)
@@ -311,14 +357,15 @@ def berechne_risiko(inp: dict) -> dict:
         # Tatsächlich bezahlte Beträge (TWD)
         "PAY_AMT1": paid[0], "PAY_AMT2": paid[1], "PAY_AMT3": paid[2],
         "PAY_AMT4": paid[3], "PAY_AMT5": paid[4], "PAY_AMT6": paid[5],
-        # Engineered Features (häufige Ergänzungen für diesen Datensatz)
-        "avg_pay_delay": verzoegerungen / 6,
-        "pay_ratio":     total_paid / max(total_bill, 1),
-        "util_rate":     (sum(bill) / 6) / max(inp["kreditbetrag_twd"], 1),
-        "total_bill":    total_bill,
-        "total_paid":    total_paid,
-        "max_delay":     max(pay),
-        "n_delays":      verzoegerungen,
+        # One-Hot: SEX (drop_first → nur SEX_2)
+        "SEX_2": int(sex_val == 2),
+        # One-Hot: EDUCATION (drop_first → Kategorien 1–6)
+        "EDUCATION_1": int(edu_val == 1), "EDUCATION_2": int(edu_val == 2),
+        "EDUCATION_3": int(edu_val == 3), "EDUCATION_4": int(edu_val == 4),
+        "EDUCATION_5": int(edu_val == 5), "EDUCATION_6": int(edu_val == 6),
+        # One-Hot: MARRIAGE (drop_first → Kategorien 1–3)
+        "MARRIAGE_1": int(mar_val == 1), "MARRIAGE_2": int(mar_val == 2),
+        "MARRIAGE_3": int(mar_val == 3),
     }
 
     # ── Modellvorhersage ─────────────────────────────────────────────────────
@@ -328,16 +375,14 @@ def berechne_risiko(inp: dict) -> dict:
 
     if model is not None:
         try:
-            # Spalten laut Modell ermitteln (scikit-learn ≥ 1.0 oder XGBoost)
+            X = pd.DataFrame([raw_input])                            # Einzelner Datensatz als DataFrame
+            # Spaltenreihenfolge an Modell anpassen (Pipeline-Input-Spalten)
             try:
-                model_cols = list(model.feature_names_in_)
-            except AttributeError:
-                model_cols = model.get_booster().feature_names
-
-            # DataFrame mit exakt den Spalten des Trainings aufbauen
-            X    = pd.DataFrame([{col: alle_features.get(col, 0) for col in model_cols}])  # Feature-Vektor mit Modell-Spalten
-            prob = float(model.predict_proba(X)[0, 1])   # Index 1 = Wahrscheinlichkeit für Klasse 1 (Ausfall)
-
+                model_cols = list(model.named_steps["feature_engineering"].feature_names_in_)
+                X = X.reindex(columns=model_cols, fill_value=0)      # Fehlende Spalten mit 0 auffüllen
+            except Exception:
+                pass                                                  # Ohne Reindex versuchen, falls Step-Name abweicht
+            prob = float(model.predict_proba(X)[0, 1])               # Index 1 = Wahrscheinlichkeit für Klasse 1 (Ausfall)
         except Exception as err:
             st.warning(f"⚠️ Modell-Vorhersage fehlgeschlagen ({err}). Heuristik wird verwendet.")
             fallback = True
@@ -432,7 +477,11 @@ def referenz_datensatz() -> pd.DataFrame:
 
     try:
         # Zeile 0 = X1/X2/... (Alias), Zeile 1 = echte Spaltennamen → header=1
-        raw = pd.read_excel(DATEINAME, header=1)   # header=1: Zeile 0 = X1/X2-Aliase, Zeile 1 = echte Spaltennamen
+        # calamine ist robuster für dieses Excel-Format; openpyxl findet keine Sheets
+        try:
+            raw = pd.read_excel(DATEINAME, header=1, engine="calamine")
+        except Exception:
+            raw = pd.read_excel(DATEINAME, header=1, engine="xlrd")   # header=1: Zeile 0 = X1/X2-Aliase, Zeile 1 = echte Spaltennamen
 
         bill_cols = ["BILL_AMT1","BILL_AMT2","BILL_AMT3","BILL_AMT4","BILL_AMT5","BILL_AMT6"]  # Kontoauszugsspalten 6 Monate
         pay_cols  = ["PAY_AMT1", "PAY_AMT2", "PAY_AMT3", "PAY_AMT4", "PAY_AMT5", "PAY_AMT6"]  # Rückzahlungsspalten 6 Monate
