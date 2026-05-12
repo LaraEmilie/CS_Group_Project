@@ -446,7 +446,7 @@ def chat_antwort(frage: str, kontext: dict, verlauf: list) -> str:
             msgs = [{"role": h["role"], "content": h["content"]} for h in verlauf[-6:]]
             msgs.append({"role": "user", "content": frage})
             r = client.messages.create(
-                model="claude-sonnet-4-20250514",    # Anthropic Claude Sonnet
+                model="claude-sonnet-4-5",    # Anthropic Claude Sonnet
                 max_tokens=400,
                 system=system,
                 messages=msgs,
