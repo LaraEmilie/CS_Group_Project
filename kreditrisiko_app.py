@@ -278,10 +278,14 @@ def wechselkurs_holen(code: str) -> tuple[float, bool]:
     key = os.getenv("EXCHANGE_API_KEY", "")     # Liest den API-Key aus den Umgebungsvariablen                            
     if key:
         try:
-            url = (f"https://api.exchangerate.host/latest"
-                   f"?base={code}&symbols=TWD&access_key={key}")          # Anfrage an die Wechselkurs-API
-            r = requests.get(url, timeout=5)
-            return r.json()["rates"]["TWD"], True
+            url = (f"https://api.exchangerate.host/live"
+                   f"?access_key={key}&source={code}&currencies=TWD")     # Anfrage an die Wechselkurs-API
+            r   = requests.get(url, timeout=5)
+            data = r.json()
+            # Antwort-Format: {"quotes": {"EURTWD": 35.2, ...}}
+            pair = f"{code}TWD"                                            # Währungspaar z.B. EURTWD
+            rate = data["quotes"][pair]
+            return float(rate), True
         except Exception:
             pass
     return FALLBACK_KURSE.get(code, 30.0), False                          # Falls keine Live-Daten verfügbar sind, werden die vordefinierten FALLBACK-Kurse verwendet.
