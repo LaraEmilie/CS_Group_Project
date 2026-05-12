@@ -711,15 +711,15 @@ elif seite == "Analyse":     # der Analysetab wird ausgeführt, wenn die Variabl
     code   = WAEHRUNGEN.get(waehrung_label) or "EUR"  # Extrahiert den internen Währungscode (z. B. CHF, EUR, USD)
     symbol = SYMBOLE.get(code, code)         # Wandelt den Währungscode in ein Anzeige-Symbol um
     kurs, live = wechselkurs_holen(code)  # Holt den aktuellen Wechselkurs zur internen Vergleichswährung TWD
-    kurs_badge = f"Kurs vom {heute_str} — {'live' if live else 'offline-Schätzung'}"   # Dynamischer Statushinweis für die Wechselkursquelle
-
-    # Visuelles Status-Badge für Live-/Offline-Wechselkursdaten
-    st.markdown(f"""
-    <div style='display:inline-flex;align-items:center;gap:6px;background:#E8F9F2;
-         border-radius:20px;padding:4px 14px;font-size:0.8rem;color:{GRÜN};margin-bottom:6px'>
-      <span style='width:7px;height:7px;border-radius:50%;background:{GRÜN};
-            display:inline-block'></span>{kurs_badge}
-    </div>""", unsafe_allow_html=True)
+    # Badge nur anzeigen wenn Fallback-Kurs verwendet wird (kein Live-Kurs verfügbar)
+    if not live:
+        st.markdown(
+            f"<div style='display:inline-flex;align-items:center;gap:6px;background:#FFF8E1;"
+            f"border-radius:20px;padding:4px 14px;font-size:0.8rem;color:{AMBER};margin-bottom:6px'>"
+            f"<span style='width:7px;height:7px;border-radius:50%;background:{AMBER};"
+            f"display:inline-block'></span>Kurs vom {heute_str} — offline-Schätzung</div>",
+            unsafe_allow_html=True
+        )
 
     # Benutzerfreundliche Eingabe des Kreditbetrags mit deutschem Zahlenformat
     kreditbetrag = num_input_de(
