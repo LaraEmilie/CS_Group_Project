@@ -5,6 +5,7 @@ Riskly ist eine interaktive Web-App, die auf Basis eines trainierten XGBoost-Mod
 https://www.kaggle.com/datasets/uciml/default-of-credit-card-clients-dataset
 
 Dort finden Sie auch eine detaillierte Erklärung der Bedeutung aller Input-Variablen.
+
 ---
 
 ## Was die App kann
